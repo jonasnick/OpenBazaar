@@ -47,10 +47,3 @@ else
 	$PYTHON node/tornadoloop.py $STOREFILE2 127.0.0.2 tcp://127.0.0.1:$MY_MARKET_PORT > $LOGDIR//demo_peer.log &
 
 fi
-
-# TODO: Want to get rid of this
-# Open the browser if -q is not passed:
-if ! [ $1 = -q ]; then
-    xdg-open http://localhost:8888
-    xdg-open http://localhost:8889
-fi
