@@ -80,7 +80,7 @@ class TransportLayer(object):
                 cb(*data)
 
     def get_profile(self):
-        return {'type': 'hello', 'uri': 'tcp://%s:12345' % MY_IP}
+        return {'type': 'hello_request', 'uri': 'tcp://%s:12345' % MY_IP}
 
     def join_network(self):
         self.listen()
@@ -164,7 +164,7 @@ class TransportLayer(object):
             return
 
         msg_type = msg.get('type')
-        if msg_type == 'hello' and msg.get('uri'):
+        if msg_type == 'hello_request' and msg.get('uri'):
             self.init_peer(msg)
         else:
             self.on_message(msg)
