@@ -18,6 +18,7 @@ import traceback
 from urlparse import urlparse
 
 
+
 class CryptoPeerConnection(PeerConnection):
 
     def __init__(self, transport, address, pub=None, node_guid=None):
@@ -464,7 +465,7 @@ class CryptoTransportLayer(TransportLayer):
       def searchIteration():
 
         self._slowNodeCount[0] = len(self._activeProbes[findID])
-        
+
 
         # Sort closest to farthest
         self._activePeers.sort(lambda firstContact, secondContact, targetKey=key: cmp(self._routingTable.distance(firstContact._guid, targetKey), self._routingTable.distance(secondContact._guid, targetKey)))

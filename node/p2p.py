@@ -3,11 +3,11 @@ import logging
 from collections import defaultdict
 import traceback
 
-from zmq.eventloop import ioloop
+from zmq.eventloop import ioloop, zmqstream
 import zmq
 from multiprocessing import Process, Queue
 from threading import Thread
-ioloop.install()
+# ioloop.install()
 import tornado
 import constants
 
@@ -41,6 +41,8 @@ class PeerConnection(object):
         msg = self.send_raw(json.dumps(data))
 
     def send_raw(self, serialized):
+
+
 
         queue = Queue()
         Thread(target=self._send_raw, args=(serialized,queue,)).start()
@@ -133,29 +135,31 @@ class TransportLayer(object):
 
 
     def listen(self, pubkey):
-        t = Thread(target=self._listen, args=(pubkey,))
-        t.setDaemon(True)
-        t.start()
+        # t = Thread(target=self._listen, args=(pubkey,))
+        # t.setDaemon(True)
+        # t.start()
+        self._listen(pubkey)
 
     def _listen(self, pubkey):
         self._log.info("Listening at: %s:%s" % (self._ip, self._port))
-        self._ctx = zmq.Context()
-        self._socket = self._ctx.socket(zmq.REP)
+        ctx = zmq.Context()
+        socket = ctx.socket(zmq.REP)
 
         if network_util.is_loopback_addr(self._ip):
             # we are in local test mode so bind that socket on the
             # specified IP
-            self._socket.bind(self._uri)
+            socket.bind(self._uri)
         else:
-            try:
-              self._socket.bind('tcp://*:%s' % self._port)
-            except:
-              pass
+            socket.bind('tcp://*:%s' % self._port)
 
-        while True:
-            message = self._socket.recv()
+        stream = zmqstream.ZMQStream(socket)
+        def handle_recv(message):
+            self._log.info("go message")
             self.on_raw_message(message)
-            self._socket.send(json.dumps({'type': 'ok', 'senderGUID':self._guid, 'pubkey':pubkey}))
+            self._log.info("go message")
+            stream.send(json.dumps({'type': 'ok', 'senderGUID':self._guid,
+                                    'pubkey': pubkey}))
+        stream.on_recv(handle_recv)
 
     def closed(self, *args):
         self._log.info("client left")
