@@ -1,11 +1,8 @@
 import constants
-from contact import Contact
 import hashlib
 import json
 import logging
-from market import Market
 import obelisk
-from obelisk import bitcoin
 import os
 from protocol import hello_request, hello_response, proto_response_pubkey
 from pymongo import MongoClient
@@ -13,6 +10,7 @@ import pyelliptic as ec
 from p2p import PeerConnection, TransportLayer
 from threading import Thread
 import time
+# ioloop.install()
 import tornado
 import traceback
 from urlparse import urlparse
@@ -21,36 +19,45 @@ from urlparse import urlparse
 
 class CryptoPeerConnection(PeerConnection):
 
-    def __init__(self, transport, address, pub=None, node_guid=None):
+    def __init__(self, transport, address, pub=None, node_guid=None, callback=lambda msg: None):
         self._priv = transport._myself
         self._pub = pub
 
         PeerConnection.__init__(self, transport, address)
 
         if node_guid != None:
-          self._guid = node_guid
+            self._guid = node_guid
+            callback(None)
         else:
-          # Get guid from PING
-          msg = self.send_raw(json.dumps({'type':'ping', 'uri':self._transport._uri, 'senderGUID':self._transport.guid, 'pubkey':self._transport.pubkey}))
-          msg = json.loads(msg)
-          self._guid = msg['senderGUID']
-          self._pub = msg['pubkey']
+
+            def cb(msg):
+                msg = msg[0]
+                msg = json.loads(msg)
+                self._guid = msg['senderGUID']
+                self._pub = msg['pubkey']
+                callback(msg)
+
+            # Get guid from PING
+            self.send_raw(json.dumps({'type':'ping', 'uri':self._transport._uri,
+                                            'senderGUID':self._transport.guid,
+                                            'pubkey':self._transport.pubkey}),
+                                callback=cb)
 
         self._log = logging.getLogger(self.__class__.__name__)
 
     def encrypt(self, data):
         return self._priv.encrypt(data, self._pub.decode('hex'))
 
-    def send(self, data):
+    def send(self, data, callback=lambda msg: None):
 
         # Include guid
         data['guid'] = self._guid
         self._log.debug('Sending to peer: %s %s' % (self._guid, self._pub))
-        self.send_raw(self.encrypt(json.dumps(data)))
+        self.send_raw(self.encrypt(json.dumps(data)), callback)
 
-    def on_message(self, msg, callback=None):
+    def on_message(self, msg, callback=lambda msg: None):
         # this are just acks
-        pass
+        callback(msg)
 
 
 class CryptoTransportLayer(TransportLayer):
@@ -83,6 +90,12 @@ class CryptoTransportLayer(TransportLayer):
         self.add_callback('findNode', self._on_findNode)
         self.add_callback('findNodeResponse', self._on_findNodeResponse)
 
+        self.listen(self.pubkey) # Turn on zmq socket
+
+        # Periodically refresh buckets
+        loop = tornado.ioloop.IOLoop.current()
+        refreshCB = tornado.ioloop.PeriodicCallback(self._refreshNode, constants.refreshTimeout, io_loop=loop)
+        refreshCB.start()
 
 
     def _init_dht(self):
@@ -135,37 +148,37 @@ class CryptoTransportLayer(TransportLayer):
       self._db.settings.update({"id":'%s' % self._market_id}, {"$set": {"secret":self.secret, "pubkey":self.pubkey, "guid":self.guid}}, True)
 
 
-    def join_network(self, seed_uri):
+    def join_network(self, seed_uri, callback=lambda msg: None):
 
-        self.listen(self.pubkey) # Turn on zmq socket
 
         if seed_uri:
-
             self._log.info('Initializing Seed Peer(s): [%s]' % (seed_uri))
 
-            seed_peer = CryptoPeerConnection(self, seed_uri)
+            def cb(msg):
+                self._iterativeFind(self._guid, self._knownNodes, 'findNode')
+                callback(msg)
 
+            self.connect(seed_uri, callback=cb)
+
+    def connect(self, uri, callback):
+        def cb(msg):
+            ip = urlparse(uri).hostname
+            port = urlparse(uri).port
+
+            if (ip, port, peer._guid) not in self._knownNodes:
+                self._knownNodes.append((ip, port, peer._guid))
 
             # Turning off peers
             #self.init_peer({'uri': seed_uri, 'guid':seed_guid})
 
-            ip = urlparse(seed_uri).hostname
-            port = urlparse(seed_uri).port
-
-
-            if (ip, port, seed_peer._guid) not in self._knownNodes:
-                self._knownNodes.append((ip, port, seed_peer._guid))
-
             # Add to routing table
-            self.addCryptoPeer(seed_peer)
+            self.addCryptoPeer(peer)
+            callback(msg)
 
-            self._iterativeFind(self._guid, self._knownNodes, 'findNode')
+        peer = CryptoPeerConnection(self, uri, callback=cb)
 
+        return peer
 
-            # Periodically refresh buckets
-            loop = tornado.ioloop.IOLoop.instance()
-            refreshCB = tornado.ioloop.PeriodicCallback(self._refreshNode, constants.refreshTimeout, io_loop=loop)
-            refreshCB.start()
 
     def _addCryptoPeer(self, uri, guid, pubkey):
       peer = CryptoPeerConnection(self, uri, pubkey, guid)

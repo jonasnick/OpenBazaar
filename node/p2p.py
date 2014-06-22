@@ -7,7 +7,7 @@ from zmq.eventloop import ioloop, zmqstream
 import zmq
 from multiprocessing import Process, Queue
 from threading import Thread
-# ioloop.install()
+ioloop.install()
 import tornado
 import constants
 
@@ -27,73 +27,39 @@ class PeerConnection(object):
         self._transport = transport
         self._address = address
         self._log = logging.getLogger(self.__class__.__name__)
+        self.create_socket()
 
     def create_socket(self):
         self._ctx = zmq.Context()
         self._socket = self._ctx.socket(zmq.REQ)
         self._socket.setsockopt(zmq.LINGER, 0)
         self._socket.connect(self._address)
+        self._stream = zmqstream.ZMQStream(self._socket, io_loop=ioloop.IOLoop.current())
 
     def cleanup_socket(self):
         self._socket.close()
 
-    def send(self, data):
-        msg = self.send_raw(json.dumps(data))
+    def send(self, data, callback):
+        self.send_raw(json.dumps(data), callback)
 
-    def send_raw(self, serialized):
+    def send_raw(self, serialized, callback=lambda msg: None):
+        self._log.info(serialized)
+        self._stream.send(serialized)
 
-
-
-        queue = Queue()
-        Thread(target=self._send_raw, args=(serialized,queue,)).start()
-        msg = queue.get()
-        return msg
-
-        pass
-
-    def _send_raw(self, serialized, raw_queue):
-
-        # pyzmq sockets are not threadsafe,
-        # they have to run in a separate process
-        queue = Queue()
-        # queue element is false if something went wrong and the peer
-        # has to be removed
-
-        p = Process(target=self._send_raw_process, args=(serialized, queue))
-        p.start()
-        msg = queue.get()
-        if not msg:
-            self._log.info("Peer %s timed out." % self._address)
-            raw_queue.put(False)
-            #self._transport.remove_peer(self._address, self._guid)
-        else:
-            raw_queue.put(msg)
-
-        p.join()
-
-
-
-    def _send_raw_process(self, serialized, queue):
-
-        self.create_socket()
-        self._socket.send(serialized)
-
-        poller = zmq.Poller()
-        poller.register(self._socket, zmq.POLLIN)
-        if poller.poll(self._timeout * 1000):
-            msg = self._socket.recv()
+        def cb(msg):
             self.on_message(msg)
-            self.cleanup_socket()
-            queue.put(msg)
+            callback(msg)
+            # self.cleanup_socket()
 
-        else:
-            self._log.info("Node timed out: %s" % self._address)
-            self.cleanup_socket()
-            queue.put(False)
+        self._stream.on_recv(cb)
 
+        # else:
+        #     self._log.info("Node timed out: %s" % self._address)
+        #     self.cleanup_socket()
 
-    def on_message(self, msg, callback=None):
+    def on_message(self, msg, callback=lambda msg: None):
         self._log.info("Message received: %s" % msg)
+        callback()
 
 
 # Transport layer manages a list of peers
@@ -130,14 +96,7 @@ class TransportLayer(object):
     def get_profile(self):
         return {'type': 'hello_request', 'uri': self._uri}
 
-
-
-
-
     def listen(self, pubkey):
-        # t = Thread(target=self._listen, args=(pubkey,))
-        # t.setDaemon(True)
-        # t.start()
         self._listen(pubkey)
 
     def _listen(self, pubkey):
@@ -152,12 +111,11 @@ class TransportLayer(object):
         else:
             socket.bind('tcp://*:%s' % self._port)
 
-        stream = zmqstream.ZMQStream(socket)
+        stream = zmqstream.ZMQStream(socket, io_loop=ioloop.IOLoop.current())
         def handle_recv(message):
-            self._log.info("go message")
-            self.on_raw_message(message)
-            self._log.info("go message")
-            stream.send(json.dumps({'type': 'ok', 'senderGUID':self._guid,
+            for msg in message:
+                self.on_raw_message(msg)
+            stream.send(json.dumps({'type': 'ok', 'senderGUID': self._guid,
                                     'pubkey': pubkey}))
         stream.on_recv(handle_recv)
 

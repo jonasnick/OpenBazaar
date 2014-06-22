@@ -1,13 +1,15 @@
-from test_util import remove_settings
+from zmq.eventloop import ioloop
+
 
 def before_all(context):
     # -- SET LOG LEVEL: behave --logging-level=ERROR ...
     # on behave command-line or in "behave.ini".
     context.config.setup_logging()
 
-def after_scenario(context, scenario):
-    if hasattr(context, 'proc'):
-        for i, proc in enumerate(context.proc):
-            proc.terminate()
-            proc.join()
-            remove_settings(i)
+
+def before_scenario(context, scenario):
+    cur = ioloop.IOLoop.current()
+    ioloop.IOLoop.clear_current()
+    cur.close(all_fds=True)
+    newloop = ioloop.IOLoop()
+    newloop.make_current()
